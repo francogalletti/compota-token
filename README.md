@@ -27,27 +27,14 @@ The system also introduces key features such as **configurable interest rate bou
    - [Active Stakers Management](#active-stakers-management)  
    - [Precision & Overflow Protection](#precision--overflow-protection)  
    - [Custom Errors & Event Emissions](#custom-errors--event-emissions)  
-6. [Integration with External Interfaces](#integration-with-external-interfaces)  
+6. [Why Uniswap V2?](#why-uniswap-v2)  
 7. [Ownership & Access Control](#ownership--access-control)  
-8. [ERC20 Standard + Extended](#erc20-standard--extended)  
+8. [Overridden ERC20 Methods](#overridden-erc20-methods) 
 9. [API Reference & Methods](#api-reference--methods)  
    - [ICompota Interface](#icompota-interface)  
-   - [Additional Public/External Functions](#additional-publicexternal-functions)  
-10. [Step-by-Step Usage](#step-by-step-usage)  
-    - [Deployment](#deployment)  
-    - [Staking & Unstaking Flow](#staking--unstaking-flow)  
-    - [Claiming Rewards](#claiming-rewards)  
-    - [Minting & Burning](#minting--burning)  
-    - [Transferring Tokens](#transferring-tokens)  
-11. [Test Coverage & Notable Scenarios](#test-coverage--notable-scenarios)  
-    - [Ownership & Access Tests](#ownership--access-tests)  
-    - [Minting, Burning, and Supply Tests](#minting-burning-and-supply-tests)  
-    - [Interest Accrual & Rate Change Tests](#interest-accrual--rate-change-tests)  
-    - [Cooldown Logic Tests](#cooldown-logic-tests)  
-    - [Staking & Unstaking Tests](#staking--unstaking-tests)  
-    - [Fuzz Testing](#fuzz-testing)  
-12. [Security & Audit Considerations](#security--audit-considerations)  
-13. [License](#license)
+   - [Additional Public/External Functions](#additional-publicexternal-functions)   
+10. [Security & Audit Considerations](#security--audit-considerations)  
+11. [License](#license)
 
 ---
 
@@ -65,19 +52,19 @@ The system also introduces key features such as **configurable interest rate bou
 4. **Configurable Rate Bounds**: An **owner** can adjust the yearlyRate (APR in BPS) within `[MIN_YEARLY_RATE, MAX_YEARLY_RATE]`.  
 5. **Reward Cooldown**: Users must wait a specified period to claim new rewards, preventing **over-compounding**.  
 6. **Max Total Supply**: Prevents unbounded inflation.  
-7. **Precision & Overflow Handling**: Uses `uint224` and carefully scaled integer math.
 
 ---
 
 ## Contract Architecture
 
 `Compota` inherits from:
-- **ERC20Extended**: A standard token interface (with 6 decimals) plus minor utility methods.  
+- **ERC20Extended**: A standard token interface (with 6 decimals) plus minor utility methods:
+   - We use the **[M0 standard ERC20Extended](https://github.com/m0-foundation/common/blob/main/src/ERC20Extended.sol)** because it incorporates additional functionality beyond the standard ERC20, including EIP-2612 for signed approvals (via EIP-712, with compatibility for EIP-1271 and EIP-5267) and EIP-3009 for transfers with authorization (also using EIP-712). This makes the token more versatile and compatible with modern cryptographic signing standards, improving user experience and flexibility. 
 - **Owned**: An ownership module from **Solmate** controlling certain admin functions.
 
 It interfaces with:
 - **ICompota**: The main external interface.  
-- **IERC20**: For interacting with ERC20-based LP tokens.  
+- **IERC20** 
 - **IUniswapV2Pair**: For reading pool reserves (`getReserves()`) and identifying token addresses, ensuring **Uniswap v2** compatibility.
 
 **Data structures** central to the system:
@@ -134,6 +121,8 @@ Then:
 
 ### Average Balance & Accumulated Balance Per Time
 
+By using an **average balance** rather than a single snapshot, Compota fairly accounts for both the amount of tokens a user holds (or stakes) and how long they hold them. If only an instantaneous balance was measured, users could briefly inflate their balance right before a snapshot to gain disproportionate rewards. Meanwhile, those consistently holding or staking a moderate balance over a longer period would be undercompensated. The time-weighted average ensures that each user’s reward is proportional not just to the magnitude of their balance, but also to the duration they keep it, reflecting a more accurate and equitable distribution of yield.
+
 To compute **average balance**, the contract uses **discrete integration** at every balance-changing event (transfer, stake, unstake, claim).
 
 1. Accumulate:
@@ -188,31 +177,63 @@ This yields a **time-weighted average** of how much the user held or staked.
 
 ---
 
-## Integration with External Interfaces
+## Why Uniswap V2?
 
-- **IUniswapV2Pair**: Queries `getReserves()` to identify how many `Compota` tokens are in the LP.
-- **IERC20**: Standard for staking/unstaking LP tokens.
-- **Uniswap v2** chosen for straightforward reserve calculations. Future v4 pools may be wrapped to mimic v2 (see [this approach](https://github.com/hensha256/v2-on-v4/blob/main/src/V2PairHook.sol)).
+The Compota contract is designed to work with **Uniswap V2-compatible liquidity pools** for the following reasons:
+
+1. **Simplicity and Compatibility**:  
+   Uniswap V2 provides a straightforward mechanism to retrieve pool reserves via the `getReserves()` function. This allows the contract to calculate the `Compota` portion in the pool with minimal complexity, ensuring efficient and reliable reward calculations.
+
+2. **Standardization**:  
+   The V2 interface is widely adopted and integrated across various DeFi ecosystems. By relying on this standard, Compota ensures compatibility with most decentralized exchanges and LP tokens available today.
+
+3. **Future-Proofing with Uniswap V4**:  
+   While Uniswap V4 introduces new features and changes, its flexibility allows pools to be adapted to emulate V2 behavior. For example, projects like [V2PairHook](https://github.com/hensha256/v2-on-v4/blob/main/src/V2PairHook.sol) demonstrate how V4 pools can be wrapped to mimic V2 interfaces. This ensures that Compota will remain compatible with future developments in Uniswap.
+
+4. **Efficiency in Reserve Calculations**:  
+   The reserve-based calculations in V2 are straightforward and require minimal on-chain processing, making them gas-efficient. This aligns with Compota’s goal of delivering robust rewards mechanisms while keeping costs manageable for users.
+
+By leveraging Uniswap V2 compatibility, Compota ensures a balance between current usability and adaptability to future innovations, making it a solid choice for staking and reward distribution.
 
 ---
 
 ## Ownership & Access Control
 
 - Inherits `Owned` from **Solmate**.
-- Only `owner` can:
-- Set `yearlyRate`, within min/max range
-- Set `rewardCooldownPeriod`
-- Add staking pools
-- Mint new tokens
+- Only the `owner` has the privilege to:
+  - **Set `yearlyRate`**: Adjust the annual percentage yield within the min/max range.
+  - **Set `rewardCooldownPeriod`**: Define the cooldown period for claiming rewards.
+  - **Add staking pools**: Introduce new liquidity pool options with custom parameters.
+  - **Mint new tokens**: Create additional tokens, respecting the `maxTotalSupply` constraint.
 - Non-owners cannot perform these privileged actions.
 
 ---
 
-## ERC20 Standard + Extended
+## Overridden ERC20 Methods
 
-- Implements standard ERC20 methods: `transfer`, `approve`, `balanceOf`, `totalSupply`, etc.
-- `balanceOf(account)` includes unclaimed rewards.
-- `transfer` updates both sender’s and recipient’s reward states.
+The Compota contract customizes several standard ERC20 methods to incorporate rewards logic and enforce system constraints:
+
+1. **`balanceOf(address account)`**:  
+   - Returns the current token balance, **including unclaimed base and staking rewards**.  
+   - This ensures users see their effective balance at all times.
+
+2. **`totalSupply()`**:  
+   - Dynamically calculates the total supply, **including all pending unclaimed rewards** across accounts.  
+   - Enforces the `maxTotalSupply` constraint.
+
+3. **`_transfer(address sender, address recipient, uint256 amount)`**:  
+   - Updates reward states for both the sender and the recipient before executing the token transfer.  
+   - Maintains accurate reward calculations for all involved parties.
+
+4. **`_mint(address to, uint256 amount)`**:  
+   - Ensures the `maxTotalSupply` constraint is respected during minting.  
+   - Updates internal reward states when minting tokens.
+
+5. **`_burn(address from, uint256 amount)`**:  
+   - Verifies sufficient balance (including pending rewards) before burning tokens.  
+   - Adjusts internal balances and the total supply accordingly.
+
+These overrides ensure that **reward logic and supply constraints** are seamlessly integrated into ERC20 operations without disrupting compatibility.
 
 ---
 
@@ -262,83 +283,6 @@ Public helper to view the multiplier growth.
 
 ---
 
-## Step-by-Step Usage
-
-### Deployment
-
-1. Deploy `Compota` with constructor parameters:
-- `name_`, `symbol_`, `yearlyRate_`, `rewardCooldownPeriod_`, `maxTotalSupply_`.
-2. Optionally add or configure pools and adjust rates (owner only).
-
----
-
-### Staking & Unstaking Flow
-
-1. **Add a Pool**:  
-```solidity
-addStakingPool(lpToken, multiplierMax, timeThreshold);
-```
-
-2.	**Stake**:
-```solidity
-stakeLiquidity(poolId, amount);
-```
-
-3.	**Unstake**:
-```solidity
-unstakeLiquidity(poolId, amount);
-```
-
-### Claiming Rewards
-
-- `claimRewards()` checks if enough time has passed since the user’s last claim:
-  - If the **cooldown** is satisfied, it **mints** pending base + staking rewards to the caller.
-  - If the **cooldown** is not met, it only updates the user’s reward accounting internally (no new tokens minted).
-
----
-
-### Minting & Burning
-
-- **Mint** (owner only):
-  ```solidity
-  mint(to, amount);
-  ```
-
-- **Burn** (owner only):
-  ```solidity
-  burn(amount);
-  ```
-### Transferring Tokens
-
-- Uses **standard ERC20** methods (`transfer`, `transferFrom`).
-- Each transfer triggers reward updates for **both** the sender and the recipient, ensuring accurate reward calculations for all parties.
-
----
-
-## Test Coverage & Notable Scenarios
-
-### Ownership & Access Tests
-- Confirms only the owner can set rates, add pools, and mint tokens.
-
-### Minting, Burning, and Supply Tests
-- Validates partial minting near `maxTotalSupply`.
-- Ensures burning cannot exceed a holder’s balance.
-
-### Interest Accrual & Rate Change Tests
-- Covers incremental interest accrual (partial-year intervals) and updates following a rate change.
-
-### Cooldown Logic Tests
-- Ensures rewards are withheld if claimed prematurely (preventing over-compounding).
-- Verifies normal mint/burn/transfer functionality remains unaffected by the cooldown.
-
-### Staking & Unstaking Tests
-- Checks multiple staking pools, partial or full unstaking, and invalid pool ID handling.
-
-### Fuzz Testing
-- Subjects the contract to large and random input values for minting, burning, base rewards, and staking rewards—ensuring robust edge-case coverage.
-
----
-
 ## Security & Audit Considerations
 
 - **Ownership**: The `owner` can change rates, add pools, and mint tokens—adopt secure governance (e.g., multisig).
@@ -355,10 +299,7 @@ unstakeLiquidity(poolId, amount);
 All code in `Compota.sol` and associated files is published under the **GPL-3.0** license.  
 For full details, see the [LICENSE](./LICENSE) file.
 
-(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧  Enjoy continuous compounding with Compota!  ✧ﾟ･: *ヽ(◕ヮ◕ヽ)
-
-
-
+🍎✨ **Dive into the sweet world of Compota—where your rewards grow continuously!** ✨🍐
 
 
 ## Getting started

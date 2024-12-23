@@ -1,10 +1,4 @@
->>==========================================================<<
-||  ____    ___    __  __   ____     ___    _____      _    ||
-|| / ___|  / _ \  |  \/  | |  _ \   / _ \  |_   _|    / \   ||
-||| |     | | | | | |\/| | | |_) | | | | |   | |     / _ \  ||
-||| |___  | |_| | | |  | | |  __/  | |_| |   | |    / ___ \ ||
-|| \____|  \___/  |_|  |_| |_|      \___/    |_|   /_/   \_\||
->>==========================================================<<
+# Compota
 
 **Compota** is an ERC20 token designed to **continuously** accrue rewards for its holders. These rewards come in two main forms:
 1. **Base Rewards**: Simply holding the token yields automatically accruing interest over time.  
